@@ -1,0 +1,61 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Network Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/7.0.7/signalr.min.js"></script>
+    <style>
+      body { font-family: Arial, sans-serif; }
+      #canvas { width: 800px; height: 400px; border:1px solid #ccc; }
+      .log { height: 120px; overflow:auto; border:1px solid #ddd; padding:6px; background:#fafafa;}
+      .node { position:absolute; width:100px; text-align:center; }
+    </style>
+  </head>
+  <body>
+    <h2>Multiplayer Network Dashboard</h2>
+    <div id="canvas" style="position:relative;">
+      <div id="serverNode" class="node" style="left:350px; top:160px;">
+        <div style="background:#333;color:#fff;padding:6px;border-radius:6px;">Server</div>
+      </div>
+    </div>
+    <h3>Packet Log</h3>
+    <div class="log" id="log"></div>
+
+    <script>
+      const connection = new signalR.HubConnectionBuilder().withUrl("/networkHub").build();
+      const log = document.getElementById("log");
+      const canvas = document.getElementById("canvas");
+      const nodes = {}; // playerId -> DOM element
+
+      function addLog(s){ const el=document.createElement("div"); el.textContent = s; log.prepend(el); if(log.childNodes.length>200) log.removeChild(log.lastChild); }
+
+      connection.on("PacketEvent", (data) => {
+        addLog(`[P] ${data.Time} ${data.Src} -> payload: ${data.Payload}`);
+      });
+
+      connection.on("StateUpdate", (data) => {
+        const payload = JSON.parse(data.Payload);
+        // update player nodes
+        payload.players.forEach(p => {
+          if(!nodes[p.id]){
+            const el = document.createElement("div");
+            el.className = 'node';
+            el.innerHTML = `<div style="background:#2b8; padding:4px; border-radius:6px;">${p.id}</div>`;
+            el.style.left = (p.x-50) + "px";
+            el.style.top = (p.y-20) + "px";
+            canvas.appendChild(el);
+            nodes[p.id] = el;
+          } else {
+            // smooth movement
+            const el = nodes[p.id];
+            el.style.left = (p.x-50) + "px";
+            el.style.top = (p.y-20) + "px";
+          }
+        });
+        addLog(`[S] ${data.Time} state: ${payload.players.length} players`);
+      });
+
+      connection.start().then(() => addLog("Connected to hub")).catch(err => addLog("SignalR err: "+err));
+    </script>
+  </body>
+</html>
