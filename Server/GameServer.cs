@@ -7,12 +7,23 @@ namespace Server;
 
 public class GameServer
 {
+    // infrastructure
     private readonly NetManager _net;
     private readonly EventBasedNetListener _listener;
-    private readonly Dictionary<string, PlayerState> _players = new();
     private readonly IHubContext<NetworkHub> _hub;
     private readonly object _lock = new();
-
+    private readonly Random _rng = new();
+    
+    // state
+    private readonly Dictionary<string, SimPlayer> _playersSim = new();
+    private readonly Dictionary<string, InputPayload> _lastInputs = new();
+    private readonly List<OrbState> _orbs = new();
+    
+    private readonly float _worldW = 800, _worldH = 600; // match client canvas for demo
+    private readonly double _tickDt = 0.025; // 25 ms tick (40 Hz) = smoother
+    private DateTime _t0 = DateTime.UtcNow;
+    private double NowSec => (DateTime.UtcNow - _t0).TotalSeconds;
+    
     public GameServer(IHubContext<NetworkHub> hub)
     {
         _hub = hub;
@@ -26,6 +37,10 @@ public class GameServer
 
         _net = new NetManager(_listener);
         _net.Start(9050);
+        
+        // spawn initial orbs
+        for (int i = 0; i < 6; i++) SpawnOrb();
+        
         Console.WriteLine("LiteNetLib server started on port 9050");
     }
 
@@ -42,7 +57,7 @@ public class GameServer
 
     private void OnPeerDisconnected(NetPeer peer, DisconnectInfo disconnectInfo)
     {
-        Console.WriteLine($"Peer disconnected: {peer.Address} | Reason: {disconnectInfo.Reason} | Connected Clients: {_players.Count}");
+        Console.WriteLine($"Peer disconnected: {peer.Address} | Reason: {disconnectInfo.Reason} | Connected Clients: {_playersSim.Count}");
     }
 
     private void OnNetworkReceive(NetPeer peer,
@@ -52,76 +67,134 @@ public class GameServer
     {
         try
         {
-            var data = reader.GetRemainingBytes();
-            var json = System.Text.Encoding.UTF8.GetString(data);
-            // forward to dashboard
-            _hub.Clients.All.SendAsync(
-                "PacketEvent", 
-                new
-                {
-                    Src = peer.Address.ToString(), 
-                    Payload = json, 
-                    Time = DateTime.UtcNow.ToString("HH:mm:ss.fff")
-                });
+            var json = System.Text.Encoding.UTF8.GetString(reader.GetRemainingBytes());
+            _hub.Clients.All.SendAsync("PacketEvent", new { Src = $"{peer.Address}", Payload = json, Time = DateTime.UtcNow.ToString("HH:mm:ss.fff") });
 
-            using var doc = JsonDocument.Parse(json);
-            if (doc.RootElement.TryGetProperty("type", out var t) && t.GetString() == "input")
+            var msg = JsonSerializer.Deserialize<InputMessage>(json);
+            if (msg?.Type == "input" && msg.Id != null)
             {
-                var id  = doc.RootElement.GetProperty("id").GetString() ?? "unknown";
-                var dx  = (float)doc.RootElement.GetProperty("input").GetProperty("dx").GetDouble();
-                var dy  = (float)doc.RootElement.GetProperty("input").GetProperty("dy").GetDouble();
-
                 lock (_lock)
                 {
-                    if (!_players.ContainsKey(id))
+                    if (!_playersSim.TryGetValue(msg.Id, out var sp))
                     {
-                        _players[id] = new PlayerState(id, 100, 100);
+                        sp = new SimPlayer { Id = msg.Id, X = _worldW * 0.5f, Y = _worldH * 0.5f, Angle = 0f, Score = 0, BoostCharges = 0 };
+                        _playersSim[msg.Id] = sp;
                     }
 
-                    var ps = _players[id];
-                    float nx = ps.X + dx * 5f; // simple movement scale
-                    float ny = ps.Y + dy * 5f;
-                    _players[id] = new PlayerState(id, nx, ny);
+                    // Store last input; boost is edge-triggered
+                    sp.InputDx = msg.Input.Dx;
+                    sp.InputDy = msg.Input.Dy;
+                    if (msg.Input.Boost) sp.ConsumeBoost = true;
                 }
             }
-
-            // Important: recycle the reader if needed
-            reader.Recycle();
         }
         catch (Exception ex)
         {
             Console.WriteLine("Receive error: " + ex);
         }
+        finally
+        {
+            reader.Recycle();
+        }
+    }
+    
+    private void SimTick()
+    {
+        double now = NowSec;
+        float dt = (float)_tickDt;
+
+        lock (_lock)
+        {
+            // move players with boost
+            foreach (var sp in _playersSim.Values)
+            {
+                // Handle boost consumption (edge-triggered)
+                if (sp.ConsumeBoost && sp.BoostCharges > 0 && !sp.BoostActive)
+                {
+                    sp.BoostActive = true;
+                    sp.BoostCharges -= 1;
+                    sp.BoostUntil = now + 0.6; // 600 ms boost
+                }
+                sp.ConsumeBoost = false;
+
+                if (sp.BoostActive && now >= sp.BoostUntil)
+                    sp.BoostActive = false;
+
+                float intentLen = MathF.Sqrt(sp.InputDx * sp.InputDx + sp.InputDy * sp.InputDy);
+                float ndx = 0, ndy = 0;
+                if (intentLen > 0.0001f)
+                {
+                    ndx = sp.InputDx / intentLen;
+                    ndy = sp.InputDy / intentLen;
+                    sp.Angle = MathF.Atan2(ndy, ndx); // face movement direction
+                }
+
+                float speed = sp.BoostActive ? sp.Speed * 2.2f : sp.Speed;
+                sp.X += ndx * speed * dt;
+                sp.Y += ndy * speed * dt;
+
+                // clamp to world bounds
+                sp.X = Math.Clamp(sp.X, 20f, _worldW - 20f);
+                sp.Y = Math.Clamp(sp.Y, 20f, _worldH - 20f);
+            }
+
+            // collision with orbs (server-authoritative)
+            const float collectR2 = 20f * 20f;
+            for (int i = _orbs.Count - 1; i >= 0; i--)
+            {
+                var orb = _orbs[i];
+                foreach (var sp in _playersSim.Values)
+                {
+                    var dx = sp.X - orb.X;
+                    var dy = sp.Y - orb.Y;
+                    if (dx * dx + dy * dy <= collectR2)
+                    {
+                        // collect
+                        sp.Score += 1;
+                        sp.BoostCharges += 1; // award one boost
+                        _orbs.RemoveAt(i);
+                        SpawnOrb();
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     public void TickBroadcast()
     {
-        // Poll events so callbacks fire
+        // poll events first
         _net.PollEvents();
 
-        PlayerState[] snapshot;
+        // simulate
+        SimTick();
+
+        // build state snapshot
+        PlayerState[] players;
+        OrbState[] orbs;
         lock (_lock)
         {
-            snapshot = _players.Values.ToArray();
+            players = _playersSim.Values
+                .Select(p => new PlayerState(p.Id, p.X, p.Y, p.Angle, p.Score, p.BoostCharges, p.BoostActive))
+                .ToArray();
+            orbs = _orbs.ToArray();
         }
 
-        var state    = new StateMessage("state", snapshot);
-        var json     = JsonSerializer.Serialize(state);
-        var data     = System.Text.Encoding.UTF8.GetBytes(json);
-        var peers    = _net.ConnectedPeerList;
+        var state = new { type = "state", players, orbs };
+        var json = JsonSerializer.Serialize(state);
+        var data = System.Text.Encoding.UTF8.GetBytes(json);
 
-        foreach (var peer in peers)
-        {
+        foreach (var peer in _net.ConnectedPeerList)
             peer.Send(data, DeliveryMethod.Unreliable);
-        }
 
-        // push to dashboard as well
-        _hub.Clients.All.SendAsync(
-            "StateUpdate", 
-            new
-            {
-                Payload = json, 
-                Time = DateTime.UtcNow.ToString("HH:mm:ss.fff")
-            });
+        _hub.Clients.All.SendAsync("StateUpdate", new { Payload = json, Time = DateTime.UtcNow.ToString("HH:mm:ss.fff") });
+    }
+    
+    private void SpawnOrb()
+    {
+        var id = $"orb_{Guid.NewGuid().ToString()[..6]}";
+        var x = (float)_rng.Next(40, (int)_worldW - 40);
+        var y = (float)_rng.Next(40, (int)_worldH - 40);
+        _orbs.Add(new OrbState(id, x, y));
     }
 }

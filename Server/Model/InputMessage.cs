@@ -1,3 +1,4 @@
 namespace Server.Model;
 
-public record InputMessage(string Type, string PlayerId, float Dx, float Dy);
+public record InputMessage(string Type, string Id, InputPayload Input);
+public record InputPayload(float Dx, float Dy, bool Boost);
