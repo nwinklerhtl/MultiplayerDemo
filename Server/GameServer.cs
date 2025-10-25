@@ -1,5 +1,6 @@
 using System.Text.Json;
 using LiteNetLib;
+using Messages;
 using Microsoft.AspNetCore.SignalR;
 using Server.Model;
 
@@ -17,7 +18,7 @@ public class GameServer
     // state
     private readonly Dictionary<string, SimPlayer> _playersSim = new();
     private readonly Dictionary<string, InputPayload> _lastInputs = new();
-    private readonly List<OrbState> _orbs = new();
+    private readonly List<OrbDto> _orbs = new();
     
     private readonly float _worldW = 800, _worldH = 600; // match client canvas for demo
     private readonly double _tickDt = 0.025; // 25 ms tick (40 Hz) = smoother
@@ -67,25 +68,39 @@ public class GameServer
     {
         try
         {
-            var json = System.Text.Encoding.UTF8.GetString(reader.GetRemainingBytes());
-            _hub.Clients.All.SendAsync("PacketEvent", new { Src = $"{peer.Address}", Payload = json, Time = DateTime.UtcNow.ToString("HH:mm:ss.fff") });
+            var bytes = reader.GetRemainingBytes();
 
-            var msg = JsonSerializer.Deserialize<InputMessage>(json);
-            if (msg?.Type == "input" && msg.Id != null)
+            // Dashboard mirror (optional)
+            _ = _hub.Clients.All.SendAsync("PacketEvent", new {
+                Src    = $"{peer.Address}:{peer.Port}",
+                Payload= System.Text.Encoding.UTF8.GetString(bytes),
+                Time   = DateTime.UtcNow.ToString("HH:mm:ss.fff")
+            });
+
+            var msg = JsonSerializer.Deserialize(bytes, WireContext.Default.InputMessage);
+            if (msg is null || string.IsNullOrWhiteSpace(msg.Id))
+                return;
+
+            lock (_lock)
             {
-                lock (_lock)
+                if (!_playersSim.TryGetValue(msg.Id, out var sp))
                 {
-                    if (!_playersSim.TryGetValue(msg.Id, out var sp))
-                    {
-                        sp = new SimPlayer { Id = msg.Id, X = _worldW * 0.5f, Y = _worldH * 0.5f, Angle = 0f, Score = 0, BoostCharges = 0 };
-                        _playersSim[msg.Id] = sp;
-                    }
-
-                    // Store last input; boost is edge-triggered
-                    sp.InputDx = msg.Input.Dx;
-                    sp.InputDy = msg.Input.Dy;
-                    if (msg.Input.Boost) sp.ConsumeBoost = true;
+                    sp = new SimPlayer { Id = msg.Id, X = _worldW*0.5f, Y = _worldH*0.5f };
+                    _playersSim[msg.Id] = sp;
+                    Console.WriteLine($"Created SimPlayer for id={msg.Id}");
                 }
+
+                // normalize input
+                var len = MathF.Sqrt(msg.Input.Dx*msg.Input.Dx + msg.Input.Dy*msg.Input.Dy);
+                if (len > 0.0001f)
+                {
+                    sp.InputDx = msg.Input.Dx / len;
+                    sp.InputDy = msg.Input.Dy / len;
+                    sp.Angle   = MathF.Atan2(sp.InputDy, sp.InputDx);
+                }
+                else { sp.InputDx = 0; sp.InputDy = 0; }
+
+                if (msg.Input.Boost) sp.ConsumeBoost = true;
             }
         }
         catch (Exception ex)
@@ -170,24 +185,24 @@ public class GameServer
         SimTick();
 
         // build state snapshot
-        PlayerState[] players;
-        OrbState[] orbs;
+        PlayerDto[] players;
+        OrbDto[] orbs;
         lock (_lock)
         {
-            players = _playersSim.Values
-                .Select(p => new PlayerState(p.Id, p.X, p.Y, p.Angle, p.Score, p.BoostCharges, p.BoostActive))
-                .ToArray();
-            orbs = _orbs.ToArray();
+            players = _playersSim.Values.Select(p =>
+                new PlayerDto(p.Id, p.X, p.Y, p.Angle, p.Score, p.BoostCharges, p.BoostActive)
+            ).ToArray();
+
+            orbs = _orbs.Select(o => new OrbDto(o.Id, o.X, o.Y)).ToArray();
         }
 
-        var state = new { type = "state", players, orbs };
-        var json = JsonSerializer.Serialize(state);
-        var data = System.Text.Encoding.UTF8.GetBytes(json);
+        var state = new StateMessage(players, orbs);
+        var data  = JsonSerializer.SerializeToUtf8Bytes(state, WireContext.Default.StateMessage);
 
         foreach (var peer in _net.ConnectedPeerList)
             peer.Send(data, DeliveryMethod.Unreliable);
 
-        _hub.Clients.All.SendAsync("StateUpdate", new { Payload = json, Time = DateTime.UtcNow.ToString("HH:mm:ss.fff") });
+        _ = _hub.Clients.All.SendAsync("StateUpdate", new { Payload = System.Text.Encoding.UTF8.GetString(data), Time = DateTime.UtcNow.ToString("HH:mm:ss.fff") });
     }
     
     private void SpawnOrb()
@@ -195,6 +210,6 @@ public class GameServer
         var id = $"orb_{Guid.NewGuid().ToString()[..6]}";
         var x = (float)_rng.Next(40, (int)_worldW - 40);
         var y = (float)_rng.Next(40, (int)_worldH - 40);
-        _orbs.Add(new OrbState(id, x, y));
+        _orbs.Add(new OrbDto(id, x, y));
     }
 }

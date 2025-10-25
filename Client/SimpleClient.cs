@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Client.Model;
 using LiteNetLib;
+using Messages;
 using Raylib_cs;
 
 namespace Client;
@@ -54,68 +55,52 @@ public class SimpleClient
         DeliveryMethod deliveryMethod)
     {
         try
-    {
-        var json = System.Text.Encoding.UTF8.GetString(reader.GetRemainingBytes());
-        using var doc = JsonDocument.Parse(json);
-        if (doc.RootElement.GetProperty("type").GetString() == "state")
         {
-            var now = Raylib.GetTime();
-            var players = doc.RootElement.GetProperty("players");
-            var orbs = doc.RootElement.GetProperty("orbs");
+            var bytes = reader.GetRemainingBytes();
+            var state = JsonSerializer.Deserialize(bytes, WireContext.Default.StateMessage);
+            if (state is null) return;
 
+            var now = Raylib.GetTime();
             lock (_lock)
             {
                 // update players
-                foreach (var el in players.EnumerateArray())
+                foreach (var p in state.Players)
                 {
-                    var pid = el.GetProperty("Id").GetString()!;
-                    var x   = (float)el.GetProperty("X").GetDouble();
-                    var y   = (float)el.GetProperty("Y").GetDouble();
-                    var ang = (float)el.GetProperty("Angle").GetDouble();
-                    var sc  = el.GetProperty("Score").GetInt32();
-                    var bc  = el.GetProperty("BoostCharges").GetInt32();
-                    var ba  = el.GetProperty("BoostActive").GetBoolean();
-
-                    if (!_views.TryGetValue(pid, out var pv))
+                    if (!_views.TryGetValue(p.Id, out var pv))
                     {
-                        pv = new PlayerView { Id = pid, X = x, Y = y, LastX = x, LastY = y, Angle = ang, LastAngle = ang };
-                        _views[pid] = pv;
+                        pv = new PlayerView { Id = p.Id, X = p.X, Y = p.Y, LastX = p.X, LastY = p.Y, Angle = p.Angle, LastAngle = p.Angle };
+                        _views[p.Id] = pv;
                     }
                     else
                     {
-                        // pulse effect if score increased
-                        if (sc > pv.Score)
+                        if (p.Score > pv.Score)
                         {
                             pv.PulseUntil = now + 0.25;
-                            SpawnSparkles(pv, x, y);
+                            SpawnSparkles(pv, p.X, p.Y);
                         }
-                        pv.LastX = pv.X; pv.LastY = pv.Y; pv.X = x; pv.Y = y;
-                        pv.LastAngle = pv.Angle; pv.Angle = ang;
+                        pv.LastX = pv.X;  pv.LastY = pv.Y;  pv.X = p.X;  pv.Y = p.Y;
+                        pv.LastAngle = pv.Angle;  pv.Angle = p.Angle;
                     }
-                    pv.Score = sc;
-                    pv.BoostCharges = bc;
-                    pv.BoostActive = ba;
-                    pv.LastUpdate = now;
+                    pv.Score = p.Score;
+                    pv.BoostCharges = p.BoostCharges;
+                    pv.BoostActive  = p.BoostActive;
+                    pv.LastUpdate   = now;
                 }
 
-                // update orbs cache (simple list)
+                // update orbs
                 _orbsClient.Clear();
-                foreach (var el in orbs.EnumerateArray())
-                {
-                    _orbsClient.Add(( (float)el.GetProperty("X").GetDouble(),
-                                      (float)el.GetProperty("Y").GetDouble() ));
-                }
+                foreach (var o in state.Orbs)
+                    _orbsClient.Add((o.X, o.Y));
             }
         }
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine("Receive error: " + ex);
-    }
-    finally
-    {
-        reader.Recycle();
-    }
+        catch (Exception ex)
+        {
+            Console.WriteLine("Receive error: " + ex);
+        }
+        finally
+        {
+            reader.Recycle();
+        }
     }
 
     // --- Public API ----------------------------------------------------------
@@ -126,9 +111,8 @@ public class SimpleClient
     {
         if (_serverPeer == null) return;
 
-        var msg = new { type = "input", id = _id, input = new { dx, dy, boost } };
-        var json = JsonSerializer.Serialize(msg);
-        var data = System.Text.Encoding.UTF8.GetBytes(json);
+        var msg  = new InputMessage(_id, new InputPayload(dx, dy, boost));
+        var data = JsonSerializer.SerializeToUtf8Bytes(msg, WireContext.Default.InputMessage);
         _serverPeer.Send(data, DeliveryMethod.Unreliable);
     }
     

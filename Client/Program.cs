@@ -1,3 +1,4 @@
+using System.Numerics;
 using Client.Model;
 using Raylib_cs;
 
@@ -129,29 +130,55 @@ public static class Program
         }
     }
 
+    // private static void DrawShipTriangle(float x, float y, float ang, Color color)
+    // {
+    //     // simple isosceles triangle as spaceship
+    //     float len = 18f;
+    //     float half = 10f;
+    //
+    //     // forward
+    //     var fx = x + MathF.Cos(ang) * len;
+    //     var fy = y + MathF.Sin(ang) * len;
+    //     // back-left
+    //     var lx = x + MathF.Cos(ang + 2.6f) * half;
+    //     var ly = y + MathF.Sin(ang + 2.6f) * half;
+    //     // back-right
+    //     var rx = x + MathF.Cos(ang - 2.6f) * half;
+    //     var ry = y + MathF.Sin(ang - 2.6f) * half;
+    //
+    //     // does not work:
+    //     Raylib.DrawTriangle(new System.Numerics.Vector2(lx, ly),
+    //         new System.Numerics.Vector2(rx, ry),
+    //         new System.Numerics.Vector2(fx, fy), color);
+    //     // works instead:
+    //     Raylib.DrawCircle((int)x, (int)y, 10, color);
+    //     
+    //     // outline (also works)
+    //     Raylib.DrawTriangleLines(new System.Numerics.Vector2(lx, ly),
+    //         new System.Numerics.Vector2(rx, ry),
+    //         new System.Numerics.Vector2(fx, fy), Color.Black);
+    // }
+    
     private static void DrawShipTriangle(float x, float y, float ang, Color color)
     {
-        // simple isosceles triangle as spaceship
-        float len = 18f;
-        float half = 10f;
+        // Define an upright isosceles triangle in LOCAL space (Y+ is forward here)
+        Vector2 pTip   = new Vector2(0f, -16f);
+        Vector2 pLeft  = new Vector2(-10f,  8f);
+        Vector2 pRight = new Vector2( 10f,  8f);
 
-        // forward
-        var fx = x + MathF.Cos(ang) * len;
-        var fy = y + MathF.Sin(ang) * len;
-        // back-left
-        var lx = x + MathF.Cos(ang + 2.6f) * half;
-        var ly = y + MathF.Sin(ang + 2.6f) * half;
-        // back-right
-        var rx = x + MathF.Cos(ang - 2.6f) * half;
-        var ry = y + MathF.Sin(ang - 2.6f) * half;
+        // rotate so 0 radians points right instead of up
+        float c = MathF.Cos(ang + MathF.PI / 2);
+        float s = MathF.Sin(ang + MathF.PI / 2);
 
-        Raylib.DrawTriangle(new System.Numerics.Vector2(lx, ly),
-            new System.Numerics.Vector2(rx, ry),
-            new System.Numerics.Vector2(fx, fy), color);
-        // outline
-        Raylib.DrawTriangleLines(new System.Numerics.Vector2(lx, ly),
-            new System.Numerics.Vector2(rx, ry),
-            new System.Numerics.Vector2(fx, fy), Color.Black);
+        Vector2 vTip   = new Vector2(x + pTip.X * c - pTip.Y * s,   y + pTip.X * s + pTip.Y * c);
+        Vector2 vLeft  = new Vector2(x + pLeft.X * c - pLeft.Y * s, y + pLeft.X * s + pLeft.Y * c);
+        Vector2 vRight = new Vector2(x + pRight.X * c - pRight.Y * s,y + pRight.X * s + pRight.Y * c);
+
+        // Filled triangle (ensure you pass System.Numerics.Vector2 to Raylib.DrawTriangle)
+        Raylib.DrawTriangle(vLeft, vRight, vTip, color);
+
+        // Outline on top
+        Raylib.DrawTriangleLines(vLeft, vRight, vTip, Color.Black);
     }
 
     private static void DrawThrusterFlame(float x, float y, float ang, float length)
