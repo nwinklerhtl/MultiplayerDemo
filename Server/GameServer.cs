@@ -17,7 +17,6 @@ public class GameServer
     
     // state
     private readonly Dictionary<string, SimPlayer> _playersSim = new();
-    private readonly Dictionary<string, InputPayload> _lastInputs = new();
     private readonly List<OrbDto> _orbs = new();
     
     private readonly float _worldW = 800, _worldH = 600; // match client canvas for demo
@@ -53,12 +52,17 @@ public class GameServer
 
     private void OnPeerConnected(NetPeer peer)
     {
-        Console.WriteLine($"Peer connected: {peer.Address}");
+        Console.WriteLine($"Peer connected: {peer.Address}:{peer.Port}");
     }
 
     private void OnPeerDisconnected(NetPeer peer, DisconnectInfo disconnectInfo)
     {
-        Console.WriteLine($"Peer disconnected: {peer.Address} | Reason: {disconnectInfo.Reason} | Connected Clients: {_playersSim.Count}");
+        var existingPlayer = _playersSim.FirstOrDefault(p => p.Value.PeerId == peer.Id);
+        if (!existingPlayer.Equals(default(KeyValuePair<string, SimPlayer>)))
+        {
+            _playersSim.Remove(existingPlayer.Key);
+        } 
+        Console.WriteLine($"Peer [{peer.Id}] disconnected: {peer.Address}:{peer.Port} | Reason: {disconnectInfo.Reason} | Connected Clients: {_playersSim.Count}");
     }
 
     private void OnNetworkReceive(NetPeer peer,
@@ -85,7 +89,7 @@ public class GameServer
             {
                 if (!_playersSim.TryGetValue(msg.Id, out var sp))
                 {
-                    sp = new SimPlayer { Id = msg.Id, X = _worldW*0.5f, Y = _worldH*0.5f };
+                    sp = new SimPlayer { Id = msg.Id, PeerId = peer.Id, X = _worldW*0.5f, Y = _worldH*0.5f };
                     _playersSim[msg.Id] = sp;
                     Console.WriteLine($"Created SimPlayer for id={msg.Id}");
                 }
@@ -166,7 +170,8 @@ public class GameServer
                     {
                         // collect
                         sp.Score += 1;
-                        sp.BoostCharges += 1; // award one boost
+                        // sp.BoostCharges += 1; // award one boost
+                        sp.BoostCharges = 1; // set one boost
                         _orbs.RemoveAt(i);
                         SpawnOrb();
                         break;

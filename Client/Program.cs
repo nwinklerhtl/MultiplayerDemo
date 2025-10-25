@@ -6,14 +6,34 @@ namespace Client;
 
 public static class Program
 {
-    public static void Main()
+    const int VIRTUAL_WIDTH = 800;
+    const int VIRTUAL_HEIGHT = 600;
+    
+    public static void Main(string[] args)
     {
-        Console.Write("Enter player id: ");
-        var id = Console.ReadLine() ?? Guid.NewGuid().ToString()[..8];
+        string id;
+        if (args.Length >= 1)
+        {
+            id = args[0][..Math.Min(args[0].Length, 8)];
+        }
+        else
+        {
+            Console.Write("Enter player id: ");
+            id = Console.ReadLine() ?? Guid.NewGuid().ToString()[..8];
+        }
 
         var client = new SimpleClient(id);
 
+        Raylib.SetConfigFlags(ConfigFlags.ResizableWindow);
         Raylib.InitWindow(800, 600, $"Client {id}");
+        for (int i = 0; i < 4; i++)
+        {
+            if (Raylib.IsGamepadAvailable(i))
+            {
+                Console.WriteLine($"Gamepad {i} connected: {Raylib.GetGamepadName_(i)}");
+            }
+        }
+        
         Raylib.SetTargetFPS(60);
 
         float px = 400f, py = 300f;
@@ -25,10 +45,19 @@ public static class Program
 
             // input
             float dx = 0f, dy = 0f;
-            if (Raylib.IsKeyDown(KeyboardKey.W) || Raylib.IsKeyDown(KeyboardKey.Up)) dy -= 1f;
-            if (Raylib.IsKeyDown(KeyboardKey.S) || Raylib.IsKeyDown(KeyboardKey.Down)) dy += 1f;
-            if (Raylib.IsKeyDown(KeyboardKey.A) || Raylib.IsKeyDown(KeyboardKey.Left)) dx -= 1f;
-            if (Raylib.IsKeyDown(KeyboardKey.D) || Raylib.IsKeyDown(KeyboardKey.Right)) dx += 1f;
+            
+            if (Raylib.IsKeyDown(KeyboardKey.W) 
+                || Raylib.IsKeyDown(KeyboardKey.Up)
+                || Raylib.IsGamepadButtonDown(0, GamepadButton.LeftFaceUp)) dy -= 1f;
+            if (Raylib.IsKeyDown(KeyboardKey.S) 
+                || Raylib.IsKeyDown(KeyboardKey.Down)
+                || Raylib.IsGamepadButtonDown(0, GamepadButton.LeftFaceDown)) dy += 1f;
+            if (Raylib.IsKeyDown(KeyboardKey.A) 
+                || Raylib.IsKeyDown(KeyboardKey.Left)
+                || Raylib.IsGamepadButtonDown(0, GamepadButton.LeftFaceLeft)) dx -= 1f;
+            if (Raylib.IsKeyDown(KeyboardKey.D) 
+                || Raylib.IsKeyDown(KeyboardKey.Right)
+                || Raylib.IsGamepadButtonDown(0, GamepadButton.LeftFaceRight)) dx += 1f;
 
             var now = DateTime.UtcNow;
             // normalize to avoid faster diagonal
@@ -39,13 +68,47 @@ public static class Program
                 dy /= len;
             }
 
-            bool boostPressed = Raylib.IsKeyPressed(KeyboardKey.Space);
+            bool boostPressed = Raylib.IsKeyPressed(KeyboardKey.Space)
+                || Raylib.IsGamepadButtonDown(0, GamepadButton.RightFaceDown);
 
             if ((now - lastInput).TotalMilliseconds >= 25) // 40 Hz to match server
             {
                 client.SendInput(dx, dy, boostPressed);
                 lastInput = now;
             }
+            
+            // query screen every frame
+            // window can be resized
+            int screenWidth = Raylib.GetScreenWidth();
+            int screenHeight = Raylib.GetScreenHeight();
+            
+            // enforce minimal screen size
+            if (screenWidth < 400 || screenHeight < 300)
+            {
+                screenWidth = Math.Max(400, screenWidth);
+                screenHeight = Math.Max(300, screenHeight);
+                Raylib.SetWindowSize(screenWidth, screenHeight);
+                
+            }
+            
+            float scale = MathF.Min(
+                (float)screenWidth / VIRTUAL_WIDTH,
+                (float)screenHeight / VIRTUAL_HEIGHT
+            );
+            
+            // compute offset to center the viewport
+            float viewportWidth = VIRTUAL_WIDTH * scale;
+            float viewportHeight = VIRTUAL_HEIGHT * scale;
+            float offsetX = (screenWidth - viewportWidth) / 2f;
+            float offsetY = (screenHeight - viewportHeight) / 2f;
+            
+            var camera = new Camera2D
+            {
+                Target = new Vector2(0, 0),
+                Offset = new Vector2(offsetX, offsetY),
+                Rotation = 0f,
+                Zoom = scale
+            };
 
             // simple local prediction
             px += dx * 5f;
@@ -53,11 +116,15 @@ public static class Program
 
             Raylib.BeginDrawing();
             Raylib.ClearBackground(new Color(18, 22, 28, 255)); // dark bg
+            
+            Raylib.BeginMode2D(camera);
 
             DrawGridBackground(40, new Color(40, 46, 56, 255));
             DrawOrbs(client.OrbsClient);
             DrawPlayers(client.GetInterpolated(), id);
             DrawScoreboard(client, id);
+            
+            Raylib.EndMode2D();
 
             Raylib.EndDrawing();
         }
@@ -67,10 +134,10 @@ public static class Program
 
     private static void DrawGridBackground(int cell, Color line)
     {
-        for (int x = 0; x <= 800; x += cell)
-            Raylib.DrawLine(x, 0, x, 600, line);
-        for (int y = 0; y <= 600; y += cell)
-            Raylib.DrawLine(0, y, 800, y, line);
+        for (int x = 0; x <= VIRTUAL_WIDTH; x += cell)
+            Raylib.DrawLine(x, 0, x, VIRTUAL_HEIGHT, line);
+        for (int y = 0; y <= VIRTUAL_HEIGHT; y += cell)
+            Raylib.DrawLine(0, y, VIRTUAL_WIDTH, y, line);
     }
 
     private static void DrawOrbs(List<(float x, float y)> orbs)
@@ -121,43 +188,23 @@ public static class Program
             }
 
             // ship
-            var body = isMe ? Color.SkyBlue : Color.Red;
-            if (v.boostActive) body = new Color(255, 140, 0, 255); // orange when boosting
-            DrawShipTriangle(v.x, v.y, v.ang, body);
+            var bodyColor = v switch
+            {
+                { boostCharges: > 0} => Color.Pink,
+                { boostActive: true } => new Color(255, 140, 0, 255),
+                {} when isMe => Color.SkyBlue,
+                _ => Color.Red
+            };
+            // var body = isMe 
+            //     ? (v.boostActive ? new Color(255, 140, 0, 255) : Color.SkyBlue) 
+            //     : Color.Red;
+            // if (v.boostActive) body = new Color(255, 140, 0, 255); // orange when boosting
+            DrawShipTriangle(v.x, v.y, v.ang, bodyColor);
 
             // name & score
             Raylib.DrawText(pid, (int)v.x + 14, (int)v.y - 22, 12, Color.LightGray);
         }
     }
-
-    // private static void DrawShipTriangle(float x, float y, float ang, Color color)
-    // {
-    //     // simple isosceles triangle as spaceship
-    //     float len = 18f;
-    //     float half = 10f;
-    //
-    //     // forward
-    //     var fx = x + MathF.Cos(ang) * len;
-    //     var fy = y + MathF.Sin(ang) * len;
-    //     // back-left
-    //     var lx = x + MathF.Cos(ang + 2.6f) * half;
-    //     var ly = y + MathF.Sin(ang + 2.6f) * half;
-    //     // back-right
-    //     var rx = x + MathF.Cos(ang - 2.6f) * half;
-    //     var ry = y + MathF.Sin(ang - 2.6f) * half;
-    //
-    //     // does not work:
-    //     Raylib.DrawTriangle(new System.Numerics.Vector2(lx, ly),
-    //         new System.Numerics.Vector2(rx, ry),
-    //         new System.Numerics.Vector2(fx, fy), color);
-    //     // works instead:
-    //     Raylib.DrawCircle((int)x, (int)y, 10, color);
-    //     
-    //     // outline (also works)
-    //     Raylib.DrawTriangleLines(new System.Numerics.Vector2(lx, ly),
-    //         new System.Numerics.Vector2(rx, ry),
-    //         new System.Numerics.Vector2(fx, fy), Color.Black);
-    // }
     
     private static void DrawShipTriangle(float x, float y, float ang, Color color)
     {

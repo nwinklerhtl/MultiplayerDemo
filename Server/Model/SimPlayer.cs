@@ -3,6 +3,7 @@ namespace Server.Model;
 public class SimPlayer
 {
     public string Id = "";
+    public int PeerId = -1;
     public float X, Y;
     public float Angle;            // radians
     public float Speed = 160f;     // px/s base speed
