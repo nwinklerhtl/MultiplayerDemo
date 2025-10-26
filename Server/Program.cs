@@ -2,8 +2,16 @@ using Server;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSignalR();
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+        policy.AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowAnyOrigin());
+});
 builder.Services.AddSingleton<GameServer>();
 var app = builder.Build();
+app.UseCors();
 app.MapGet("/", () => "Multiplayer Demo Server is running");
 app.MapHub<NetworkHub>("/networkHub");
 var server = app.Services.GetRequiredService<GameServer>();
@@ -16,7 +24,7 @@ _ = Task.Run(async () =>
     {
         try
         {
-            server.TickBroadcast();
+            await server.TickBroadcast();
         }
         catch (Exception ex)
         {

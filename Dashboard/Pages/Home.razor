@@ -1,0 +1,86 @@
+﻿@page "/"
+@using Messages
+@using Microsoft.AspNetCore.SignalR.Client
+@inject NavigationManager Nav
+
+<h3 class="mb-3">Multiplayer Server Dashboard</h3>
+
+@if (!connected)
+{
+    <p><em>Connecting to SignalR hub …</em></p>
+}
+else
+{
+    <div class="row">
+        <div class="col-md-6">
+            <h5>Packets</h5>
+            <div class="border p-2 bg-dark text-light small" style="height:300px;overflow:auto;">
+                @foreach (var p in packets.AsEnumerable().Reverse())
+                {
+                    <div>@p.Time | <strong>@p.Src</strong> → @p.Payload</div>
+                }
+            </div>
+        </div>
+
+        <div class="col-md-6">
+            <h5>State Updates</h5>
+            <div class="border p-2 bg-dark text-light small" style="height:300px;overflow:auto;">
+                @foreach (var s in states.AsEnumerable().Reverse())
+                {
+                    <div>@s.Time | @s.Payload.StateToString()</div>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private HubConnection? hub;
+    private bool connected;
+    private record Packet(string Src, string Payload, string Time);
+    private record State(StateMessage Payload, DateTime Time);
+    private readonly List<Packet> packets = new();
+    private readonly List<State> states = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        var baseUri = Nav.BaseUri.TrimEnd('/');
+        var hubUrl = baseUri.Replace("blazor", "server") + "/networkhub";
+        // if hosted together, you can simply use Nav.ToAbsoluteUri("/networkhub").ToString()
+        // hub = new HubConnectionBuilder()
+        //     .WithUrl(Nav.ToAbsoluteUri("/networkhub"))
+        //     .WithAutomaticReconnect()
+        //     .Build();
+        hub = new HubConnectionBuilder()
+            .WithUrl("http://localhost:5000/networkHub")
+            .WithAutomaticReconnect()
+            .Build();
+
+        hub.On<object>("PacketEvent", data =>
+        {
+            var src = data?.GetType().GetProperty("src")?.GetValue(data)?.ToString() ?? "";
+            var payload = data?.GetType().GetProperty("payload")?.GetValue(data)?.ToString() ?? "";
+            var time = data?.GetType().GetProperty("time")?.GetValue(data)?.ToString() ?? "";
+            packets.Add(new Packet(src, payload, time));
+            if (packets.Count > 200) packets.RemoveAt(0);
+            InvokeAsync(StateHasChanged);
+        });
+
+        hub.On<SignalRStateMessage>("StateUpdate", data =>
+        {
+            // var payload = data?.GetType().GetProperty("payload")?.GetValue(data)?.ToString() ?? "";
+            // var time = data?.GetType().GetProperty("time")?.GetValue(data)?.ToString() ?? "";
+            states.Add(new State(data.Payload, data.Time));
+            while (states.Count > 200) states.RemoveAt(0);
+            InvokeAsync(StateHasChanged);
+        });
+
+        await hub.StartAsync();
+        connected = true;
+    }
+
+    
+
+    private static string shorten(string text, int max)
+        => text.Length <= max ? text : text.Substring(0, max) + "…";
+}

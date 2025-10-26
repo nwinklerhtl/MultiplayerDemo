@@ -8,4 +8,5 @@ namespace Messages;
     WriteIndented = false)]
 [JsonSerializable(typeof(InputMessage))]
 [JsonSerializable(typeof(StateMessage))]
+[JsonSerializable(typeof(SignalRStateMessage))]
 public partial class WireContext : JsonSerializerContext { }

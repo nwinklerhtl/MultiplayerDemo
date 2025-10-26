@@ -11,7 +11,7 @@ public class GameServer
     // infrastructure
     private readonly NetManager _net;
     private readonly EventBasedNetListener _listener;
-    private readonly IHubContext<NetworkHub> _hub;
+    private readonly IHubContext<NetworkHub> _signalrHub;
     private readonly object _lock = new();
     private readonly Random _rng = new();
     
@@ -23,10 +23,12 @@ public class GameServer
     private readonly double _tickDt = 0.025; // 25 ms tick (40 Hz) = smoother
     private DateTime _t0 = DateTime.UtcNow;
     private double NowSec => (DateTime.UtcNow - _t0).TotalSeconds;
+
+    private string? _lastSentSignalRState = null;
     
-    public GameServer(IHubContext<NetworkHub> hub)
+    public GameServer(IHubContext<NetworkHub> signalrHub)
     {
-        _hub = hub;
+        _signalrHub = signalrHub;
         _listener = new EventBasedNetListener();
 
         // Subscribe to relevant events
@@ -75,7 +77,7 @@ public class GameServer
             var bytes = reader.GetRemainingBytes();
 
             // Dashboard mirror (optional)
-            _ = _hub.Clients.All.SendAsync("PacketEvent", new {
+            _ = _signalrHub.Clients.All.SendAsync("PacketEvent", new {
                 Src    = $"{peer.Address}:{peer.Port}",
                 Payload= System.Text.Encoding.UTF8.GetString(bytes),
                 Time   = DateTime.UtcNow.ToString("HH:mm:ss.fff")
@@ -181,7 +183,7 @@ public class GameServer
         }
     }
 
-    public void TickBroadcast()
+    public async Task TickBroadcast()
     {
         // poll events first
         _net.PollEvents();
@@ -207,7 +209,13 @@ public class GameServer
         foreach (var peer in _net.ConnectedPeerList)
             peer.Send(data, DeliveryMethod.Unreliable);
 
-        _ = _hub.Clients.All.SendAsync("StateUpdate", new { Payload = System.Text.Encoding.UTF8.GetString(data), Time = DateTime.UtcNow.ToString("HH:mm:ss.fff") });
+        // _ = _signalrHub.Clients.All.SendAsync("StateUpdate", new { Payload = System.Text.Encoding.UTF8.GetString(data), Time = DateTime.UtcNow.ToString("HH:mm:ss.fff") });
+        var stateAsString = state.StateToString();
+        if (_lastSentSignalRState is null || _lastSentSignalRState != stateAsString)
+        {
+            _lastSentSignalRState = stateAsString;
+            await _signalrHub.Clients.All.SendAsync("StateUpdate", new SignalRStateMessage(DateTime.UtcNow, state));
+        }
     }
     
     private void SpawnOrb()

@@ -19,9 +19,13 @@ public sealed record InputPayload(
 // -------- Server -> Client --------
 
 public sealed record StateMessage(
-    [property: JsonPropertyName("players")] IReadOnlyList<PlayerDto> Players,
-    [property: JsonPropertyName("orbs")]    IReadOnlyList<OrbDto>    Orbs
-);
+    [property: JsonPropertyName("players")]
+    IReadOnlyList<PlayerDto> Players,
+    [property: JsonPropertyName("orbs")] IReadOnlyList<OrbDto> Orbs
+)
+{
+    public string StateToString() => $"{string.Join(" | ", Players.Select(p => $"{p.Id}:({p.X},{p.Y})"))} + {string.Join(" | ", Orbs.Select(o => $"O({o.X},{o.Y})"))}";
+};
 
 public sealed record PlayerDto(
     [property: JsonPropertyName("id")]           string Id,
@@ -37,6 +41,13 @@ public sealed record OrbDto(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("x")]  float  X,
     [property: JsonPropertyName("y")]  float  Y
+);
+
+// -------- Server -> Dashboard --------
+
+public sealed record SignalRStateMessage(
+    [property: JsonPropertyName("time")] DateTime Time,
+    [property: JsonPropertyName("payload")] StateMessage Payload
 );
 
 // (Optional) central JSON options you can reuse on both sides
