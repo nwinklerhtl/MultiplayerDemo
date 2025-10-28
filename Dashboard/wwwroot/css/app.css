@@ -1,5 +1,6 @@
 html, body {
     font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    background-color: #ec920a;
 }
 
 h1:focus {
@@ -111,4 +112,21 @@ code {
 
 .form-floating > .form-control-plaintext:focus::placeholder, .form-floating > .form-control:focus::placeholder {
     text-align: start;
+}
+
+/* game visualization */
+.server-view {
+    /* Let it scale with the page; adjust height as you like */
+    width: 100%;
+    max-width: 800px;
+    margin:auto;
+    aspect-ratio: 4 / 3;          /* keeps 4:3 box */
+    background: #000;             /* black bars and around the SVG */
+    border: 1px solid #222;
+}
+
+.server-svg {
+    width: 100%;
+    height: 100%;
+    display: block;               /* removes default inline spacing */
 }

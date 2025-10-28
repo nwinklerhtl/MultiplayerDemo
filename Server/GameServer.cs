@@ -75,6 +75,9 @@ public class GameServer
         try
         {
             var bytes = reader.GetRemainingBytes();
+            var msg = JsonSerializer.Deserialize(bytes, WireContext.Default.InputMessage);
+            if (msg is null || string.IsNullOrWhiteSpace(msg.Id))
+                return;
 
             // Dashboard mirror (optional)
             _ = _signalrHub.Clients.All.SendAsync("PacketEvent", new {
@@ -82,10 +85,13 @@ public class GameServer
                 Payload= System.Text.Encoding.UTF8.GetString(bytes),
                 Time   = DateTime.UtcNow.ToString("HH:mm:ss.fff")
             });
-
-            var msg = JsonSerializer.Deserialize(bytes, WireContext.Default.InputMessage);
-            if (msg is null || string.IsNullOrWhiteSpace(msg.Id))
-                return;
+            
+            _ = _signalrHub.Clients.All.SendAsync(
+                "PacketEvent", 
+                new SignalRPacketMessage(
+                    $"{peer.Address}:{peer.Port}", 
+                    msg, 
+                    DateTime.UtcNow));
 
             lock (_lock)
             {

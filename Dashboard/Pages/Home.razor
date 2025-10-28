@@ -17,7 +17,7 @@ else
             <div class="border p-2 bg-dark text-light small" style="height:300px;overflow:auto;">
                 @foreach (var p in packets.AsEnumerable().Reverse())
                 {
-                    <div>@p.Time | <strong>@p.Src</strong> → @p.Payload</div>
+                    <div>@p.Time.ToString("hh:mm:ss.fff") | <strong>@p.Src</strong> → @p.Payload.Input</div>
                 }
             </div>
         </div>
@@ -27,20 +27,72 @@ else
             <div class="border p-2 bg-dark text-light small" style="height:300px;overflow:auto;">
                 @foreach (var s in states.AsEnumerable().Reverse())
                 {
-                    <div>@s.Time | @s.Payload.StateToString()</div>
+                    <div>@s.Time.ToString("hh:mm:ss.fff") | @s.Payload.StateToString()</div>
                 }
             </div>
+        </div>
+    </div>
+    
+    @* Game Visualization *@
+    <div class="mt-4">
+        <!-- Outer container: black background + fixed aspect ratio 4:3 -->
+        <div class="server-view">
+            <!-- SVG scales to container, keeps aspect ratio, and uses an 800x600 virtual space -->
+            <svg viewBox="0 0 800 600" preserveAspectRatio="xMidYMid meet" class="server-svg">
+                <!-- BACKGROUND (dark) -->
+                <rect x="0" y="0" width="800" height="600" fill="#000000" />
+
+                @if (latestState is not null)
+                {
+                    @* <!-- GRID (subtle, to show world bounds) --> *@
+                    @* @for (int x = 0; x <= 800; x += 40) *@
+                    @* { *@
+                    @*     <line x1="@x" y1="0" x2="@x" y2="600" stroke="#2b2f38" stroke-width="1" /> *@
+                    @* } *@
+                    @* @for (int y = 0; y <= 600; y += 40) *@
+                    @* { *@
+                    @*     <line x1="0" y1="@y" x2="800" y2="@y" stroke="#2b2f38" stroke-width="1" /> *@
+                    @* } *@
+
+                    <!-- ORBS (simple cyan circles) -->
+                    @foreach (var o in latestState.Orbs)
+                    {
+                        <circle cx="@o.X" cy="@o.Y" r="6" fill="#78FFF0" />
+                    }
+
+                    <!-- PLAYERS (triangles pointing right by default, rotated by Angle) -->
+                    @foreach (var p in latestState.Players)
+                    {
+                        var fill = "#87CEEB";
+                        var stroke = "#111111";
+                        var a = RadToDeg(p.Angle); // 0 rad means "right" in our world; triangle points right by default
+
+                        <!-- Triangle defined in LOCAL coords, pointing right: (nose) (tail-top) (tail-bottom) -->
+                        <circle cx="@p.X" cy="@p.Y" r="6" fill="red" />
+
+                        <!-- Name/score label (tiny, above) -->
+                        <svg:text x="@(p.X + 14)" y="@(p.Y - 10)" font-size="10" fill="#CCCCCC">
+                            @p.Id (@p.Score)
+                        </svg:text>
+                    }
+                }
+            </svg>
         </div>
     </div>
 }
 
 @code {
+    // infrastructure
     private HubConnection? hub;
     private bool connected;
-    private record Packet(string Src, string Payload, string Time);
+    
+    // state
     private record State(StateMessage Payload, DateTime Time);
-    private readonly List<Packet> packets = new();
+    private readonly List<SignalRPacketMessage> packets = new();
     private readonly List<State> states = new();
+    
+    // for game field rendering
+    private StateMessage? latestState;
 
     protected override async Task OnInitializedAsync()
     {
@@ -56,13 +108,13 @@ else
             .WithAutomaticReconnect()
             .Build();
 
-        hub.On<object>("PacketEvent", data =>
+        hub.On<SignalRPacketMessage>("PacketEvent", data =>
         {
-            var src = data?.GetType().GetProperty("src")?.GetValue(data)?.ToString() ?? "";
-            var payload = data?.GetType().GetProperty("payload")?.GetValue(data)?.ToString() ?? "";
-            var time = data?.GetType().GetProperty("time")?.GetValue(data)?.ToString() ?? "";
-            packets.Add(new Packet(src, payload, time));
-            if (packets.Count > 200) packets.RemoveAt(0);
+            // var src = data?.GetType().GetProperty("src")?.GetValue(data)?.ToString() ?? "";
+            // var payload = data?.GetType().GetProperty("payload")?.GetValue(data)?.ToString() ?? "";
+            // var time = data?.GetType().GetProperty("time")?.GetValue(data)?.ToString() ?? "";
+            packets.Add(data);
+            if (packets.Count > 20) packets.RemoveAt(0);
             InvokeAsync(StateHasChanged);
         });
 
@@ -71,7 +123,8 @@ else
             // var payload = data?.GetType().GetProperty("payload")?.GetValue(data)?.ToString() ?? "";
             // var time = data?.GetType().GetProperty("time")?.GetValue(data)?.ToString() ?? "";
             states.Add(new State(data.Payload, data.Time));
-            while (states.Count > 200) states.RemoveAt(0);
+            while (states.Count > 20) states.RemoveAt(0);
+            latestState = data.Payload;
             InvokeAsync(StateHasChanged);
         });
 
@@ -79,8 +132,6 @@ else
         connected = true;
     }
 
-    
-
-    private static string shorten(string text, int max)
-        => text.Length <= max ? text : text.Substring(0, max) + "…";
+    // Helper for SVG rotation (radians -> degrees)
+    private static double RadToDeg(float rad) => rad * (180.0 / Math.PI);
 }

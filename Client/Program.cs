@@ -68,7 +68,7 @@ public static class Program
                 dy /= len;
             }
 
-            bool boostPressed = Raylib.IsKeyPressed(KeyboardKey.Space)
+            bool boostPressed = Raylib.IsKeyDown(KeyboardKey.Space)
                 || Raylib.IsGamepadButtonDown(0, GamepadButton.RightFaceDown);
 
             if ((now - lastInput).TotalMilliseconds >= 25) // 40 Hz to match server
@@ -195,10 +195,6 @@ public static class Program
                 {} when isMe => Color.SkyBlue,
                 _ => Color.Red
             };
-            // var body = isMe 
-            //     ? (v.boostActive ? new Color(255, 140, 0, 255) : Color.SkyBlue) 
-            //     : Color.Red;
-            // if (v.boostActive) body = new Color(255, 140, 0, 255); // orange when boosting
             DrawShipTriangle(v.x, v.y, v.ang, bodyColor);
 
             // name & score

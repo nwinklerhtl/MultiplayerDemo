@@ -11,9 +11,9 @@ public sealed record InputMessage(
 );
 
 public sealed record InputPayload(
-    [property: JsonPropertyName("dx")]    float Dx,
-    [property: JsonPropertyName("dy")]    float Dy,
-    [property: JsonPropertyName("boost")] bool  Boost
+    [property: JsonPropertyName("dx")] float Dx,
+    [property: JsonPropertyName("dy")] float Dy,
+    [property: JsonPropertyName("boost")] bool Boost
 );
 
 // -------- Server -> Client --------
@@ -48,6 +48,12 @@ public sealed record OrbDto(
 public sealed record SignalRStateMessage(
     [property: JsonPropertyName("time")] DateTime Time,
     [property: JsonPropertyName("payload")] StateMessage Payload
+);
+
+public sealed record SignalRPacketMessage(
+    [property: JsonPropertyName("src")] string Src,
+    [property: JsonPropertyName("payload")] InputMessage Payload,
+    [property: JsonPropertyName("time")] DateTime Time
 );
 
 // (Optional) central JSON options you can reuse on both sides
