@@ -3,6 +3,7 @@ using LiteNetLib;
 using Messages;
 using Microsoft.AspNetCore.SignalR;
 using Server.Model;
+using Server.Services;
 
 namespace Server;
 
@@ -14,6 +15,7 @@ public class GameServer
     private readonly IHubContext<NetworkHub> _signalrHub;
     private readonly object _lock = new();
     private readonly Random _rng = new();
+    private readonly NetworkChaos _chaos;
     
     // state
     private readonly Dictionary<string, SimPlayer> _playersSim = new();
@@ -26,10 +28,13 @@ public class GameServer
 
     private string? _lastSentSignalRState = null;
     
-    public GameServer(IHubContext<NetworkHub> signalrHub)
+    public GameServer(
+        IHubContext<NetworkHub> signalrHub,
+        NetworkChaos chaos)
     {
         _signalrHub = signalrHub;
         _listener = new EventBasedNetListener();
+        _chaos = chaos;
 
         // Subscribe to relevant events
         _listener.ConnectionRequestEvent += OnConnectionRequest;
@@ -189,7 +194,7 @@ public class GameServer
         }
     }
 
-    public async Task TickBroadcast()
+    public async Task TickBroadcastAsync()
     {
         // poll events first
         _net.PollEvents();
@@ -213,7 +218,16 @@ public class GameServer
         var data  = JsonSerializer.SerializeToUtf8Bytes(state, WireContext.Default.StateMessage);
 
         foreach (var peer in _net.ConnectedPeerList)
+        {
+            if (_chaos.IsActive && _chaos.ShouldDrop())
+                continue;
+            
+            var delay = _chaos.DelayMs();
+            if (delay > 0)
+                await Task.Delay(delay);
+            
             peer.Send(data, DeliveryMethod.Unreliable);
+        }
 
         // _ = _signalrHub.Clients.All.SendAsync("StateUpdate", new { Payload = System.Text.Encoding.UTF8.GetString(data), Time = DateTime.UtcNow.ToString("HH:mm:ss.fff") });
         var stateAsString = state.StateToString();

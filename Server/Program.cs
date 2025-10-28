@@ -1,4 +1,5 @@
 using Server;
+using Server.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSignalR();
@@ -10,6 +11,7 @@ builder.Services.AddCors(options =>
             .AllowAnyOrigin());
 });
 builder.Services.AddSingleton<GameServer>();
+builder.Services.AddSingleton<NetworkChaos>();
 var app = builder.Build();
 app.UseCors();
 app.MapGet("/", () => "Multiplayer Demo Server is running");
@@ -24,13 +26,13 @@ _ = Task.Run(async () =>
     {
         try
         {
-            await server.TickBroadcast();
+            await server.TickBroadcastAsync();
         }
         catch (Exception ex)
         {
             Console.WriteLine("Broadcast error: " + ex);
         }
-        await Task.Delay(25);
+        await Task.Delay(25, cts.Token);
     }
 });
 

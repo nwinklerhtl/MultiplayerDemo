@@ -33,6 +33,40 @@ else
         </div>
     </div>
     
+    @* CHAOS *@
+    <div class="mb-3 d-flex align-items-end gap-2">
+        <div>
+            <label class="form-label">Duration (s)</label>
+            <input type="number" class="form-control" @bind="durationSec" min="1" max="60" />
+        </div>
+        <div>
+            <label class="form-label">Latency (ms)</label>
+            <input type="number" class="form-control" @bind="latencyMs" min="0" max="2000" />
+        </div>
+        <div>
+            <label class="form-label">Jitter (ms)</label>
+            <input type="number" class="form-control" @bind="jitterMs" min="0" max="1000" />
+        </div>
+        <div>
+            <label class="form-label">Loss (0..1)</label>
+            <input type="number" step="0.05" class="form-control" @bind="loss" min="0" max="1" />
+        </div>
+
+        <button class="btn btn-danger" @onclick="TriggerPanic" disabled="@(hub is null || !connected)">Panic</button>
+
+        <div class="ms-auto">
+            <span class="badge @(chaos?.Active == true ? "bg-danger" : "bg-success")">
+                @(chaos?.Active == true ? $"PANIC {Math.Max(0, chaos.RemainingMs/1000)}s" : "Normal")
+            </span>
+            @if (chaos is not null)
+            {
+                <small class="text-muted ms-2">
+                    L=@chaos.LatencyMs ms, J=@chaos.JitterMs ms, Loss=@chaos.Loss
+                </small>
+            }
+        </div>
+    </div>
+    
     @* Game Visualization *@
     <div class="mt-4">
         <!-- Outer container: black background + fixed aspect ratio 4:3 -->
@@ -44,16 +78,6 @@ else
 
                 @if (latestState is not null)
                 {
-                    @* <!-- GRID (subtle, to show world bounds) --> *@
-                    @* @for (int x = 0; x <= 800; x += 40) *@
-                    @* { *@
-                    @*     <line x1="@x" y1="0" x2="@x" y2="600" stroke="#2b2f38" stroke-width="1" /> *@
-                    @* } *@
-                    @* @for (int y = 0; y <= 600; y += 40) *@
-                    @* { *@
-                    @*     <line x1="0" y1="@y" x2="800" y2="@y" stroke="#2b2f38" stroke-width="1" /> *@
-                    @* } *@
-
                     <!-- ORBS (simple cyan circles) -->
                     @foreach (var o in latestState.Orbs)
                     {
@@ -63,8 +87,6 @@ else
                     <!-- PLAYERS (triangles pointing right by default, rotated by Angle) -->
                     @foreach (var p in latestState.Players)
                     {
-                        var fill = "#87CEEB";
-                        var stroke = "#111111";
                         var a = RadToDeg(p.Angle); // 0 rad means "right" in our world; triangle points right by default
 
                         <!-- Triangle defined in LOCAL coords, pointing right: (nose) (tail-top) (tail-bottom) -->
@@ -79,6 +101,8 @@ else
             </svg>
         </div>
     </div>
+    
+    
 }
 
 @code {
@@ -93,6 +117,13 @@ else
     
     // for game field rendering
     private StateMessage? latestState;
+    
+    // for chaos
+    private int durationSec = 10;
+    private int latencyMs = 120;
+    private int jitterMs = 40;
+    private double loss = 0.30;
+    private ChaosDto? chaos;
 
     protected override async Task OnInitializedAsync()
     {
@@ -127,9 +158,29 @@ else
             latestState = data.Payload;
             InvokeAsync(StateHasChanged);
         });
+        
+        // listen to chaos status broadcasts
+        hub.On<ChaosDto>("ChaosStatus", dto =>
+        {
+            chaos = dto;
+            InvokeAsync(StateHasChanged);
+        });
 
         await hub.StartAsync();
         connected = true;
+        
+        // query initial status
+        chaos = await hub.InvokeAsync<ChaosDto>("GetChaosStatus");
+        StateHasChanged();
+    }
+    
+    private async Task TriggerPanic()
+    {
+        if (hub is null) return;
+        await hub.InvokeAsync("Panic", durationSec, latencyMs, jitterMs, loss);
+        // server will broadcast ChaosStatus; we also fetch it defensively:
+        chaos = await hub.InvokeAsync<ChaosDto>("GetChaosStatus");
+        StateHasChanged();
     }
 
     // Helper for SVG rotation (radians -> degrees)

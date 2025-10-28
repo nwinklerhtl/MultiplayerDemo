@@ -56,6 +56,8 @@ public sealed record SignalRPacketMessage(
     [property: JsonPropertyName("time")] DateTime Time
 );
 
+public sealed record ChaosDto(bool Active, int RemainingMs, int LatencyMs, int JitterMs, double Loss);
+
 // (Optional) central JSON options you can reuse on both sides
 public static class JsonWire
 {
