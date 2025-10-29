@@ -1,3 +1,5 @@
+using System.Net;
+using System.Runtime.ExceptionServices;
 using System.Text.Json;
 using Client.Model;
 using LiteNetLib;
@@ -22,6 +24,12 @@ public class SimpleClient
     private bool playerWasBoosting = false;
     private int playerLastOrbCount = 0;
 
+    private bool _gameOver = false;
+    private bool _gameWon = false;
+    
+    public bool GameOver => _gameOver;
+    public bool GameWon => _gameWon;
+
     public List<(float x, float y)> OrbsClient => _orbsClient;
     
     // events
@@ -29,7 +37,7 @@ public class SimpleClient
     public event EventHandler CollectedOrb;
 
 
-    public SimpleClient(string id)
+    public SimpleClient(string id, IPAddress serverIp)
     {
         _id = id;
         _listener = new EventBasedNetListener();
@@ -41,7 +49,7 @@ public class SimpleClient
 
         _net = new NetManager(_listener);
         _net.Start();
-        _net.Connect("127.0.0.1", 9050, "demo");
+        _net.Connect(serverIp.ToString(), 9050, "demo");
     }
 
     private void OnPeerConnected(NetPeer peer)
@@ -64,72 +72,115 @@ public class SimpleClient
         try
         {
             var bytes = reader.GetRemainingBytes();
-            var state = JsonSerializer.Deserialize(bytes, WireContext.Default.StateMessage);
-            if (state is null) return;
-            
-            // derive events
-            var player = state.Players.FirstOrDefault(p => p.Id == _id);
-            if (player is not null)
+
+            var env = JsonSerializer.Deserialize<Envelope<JsonElement>>(bytes);
+
+            switch (env?.Type)
             {
-                if (!player.BoostActive)
-                {
-                    playerWasBoosting = false;
-                }
-                
-                if (!playerWasBoosting && player.BoostActive)
-                {
-                    playerWasBoosting = true;
-                    UsedBoost?.Invoke(this, EventArgs.Empty);
-                }
+                case MessageType.State:
+                    var state = env.Payload.Deserialize(WireContext.Default.StateMessage);
+                    HandleState(state!);
+                    break;
 
-                if (playerLastOrbCount < player.Score)
-                {
-                    playerLastOrbCount = player.Score;
-                    CollectedOrb?.Invoke(this, EventArgs.Empty);
-                }
-            }
+                case MessageType.GameOver:
+                    var go = env.Payload.Deserialize(WireContext.Default.GameOverDto);
+                    HandleGameOver(go!);
+                    break;
 
-            var now = Raylib.GetTime();
-            lock (_lock)
-            {
-                // update players
-                foreach (var p in state.Players)
-                {
-                    if (!_views.TryGetValue(p.Id, out var pv))
-                    {
-                        pv = new PlayerView { Id = p.Id, X = p.X, Y = p.Y, LastX = p.X, LastY = p.Y, Angle = p.Angle, LastAngle = p.Angle };
-                        _views[p.Id] = pv;
-                    }
-                    else
-                    {
-                        if (p.Score > pv.Score)
-                        {
-                            pv.PulseUntil = now + 0.25;
-                            SpawnSparkles(pv, p.X, p.Y);
-                        }
-                        pv.LastX = pv.X;  pv.LastY = pv.Y;  pv.X = p.X;  pv.Y = p.Y;
-                        pv.LastAngle = pv.Angle;  pv.Angle = p.Angle;
-                    }
-                    pv.Score = p.Score;
-                    pv.BoostCharges = p.BoostCharges;
-                    pv.BoostActive  = p.BoostActive;
-                    pv.LastUpdate   = now;
-                }
-
-                // update orbs
-                _orbsClient.Clear();
-                foreach (var o in state.Orbs)
-                    _orbsClient.Add((o.X, o.Y));
+                case MessageType.Reset:
+                    HandleReset();
+                    break;
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine("Receive error: " + ex);
+            Console.WriteLine("NetworkReceive error: " + ex.Message);
         }
         finally
         {
             reader.Recycle();
         }
+        
+        
+    }
+
+    private void HandleState(StateMessage state)
+    {
+        // derive events
+        var player = state.Players.FirstOrDefault(p => p.Id == _id);
+        if (player is not null)
+        {
+            if (!player.BoostActive)
+            {
+                playerWasBoosting = false;
+            }
+            
+            if (!playerWasBoosting && player.BoostActive)
+            {
+                playerWasBoosting = true;
+                UsedBoost?.Invoke(this, EventArgs.Empty);
+            }
+
+            if (playerLastOrbCount < player.Score)
+            {
+                playerLastOrbCount = player.Score;
+                CollectedOrb?.Invoke(this, EventArgs.Empty);
+            }
+        }
+
+        var now = Raylib.GetTime();
+        lock (_lock)
+        {
+            // update players
+            foreach (var p in state.Players)
+            {
+                if (!_views.TryGetValue(p.Id, out var pv))
+                {
+                    pv = new PlayerView { Id = p.Id, X = p.X, Y = p.Y, LastX = p.X, LastY = p.Y, Angle = p.Angle, LastAngle = p.Angle };
+                    _views[p.Id] = pv;
+                }
+                else
+                {
+                    if (p.Score > pv.Score)
+                    {
+                        pv.PulseUntil = now + 0.25;
+                        SpawnSparkles(pv, p.X, p.Y);
+                    }
+                    pv.LastX = pv.X;  pv.LastY = pv.Y;  pv.X = p.X;  pv.Y = p.Y;
+                    pv.LastAngle = pv.Angle;  pv.Angle = p.Angle;
+                }
+                pv.Score = p.Score;
+                pv.BoostCharges = p.BoostCharges;
+                pv.BoostActive  = p.BoostActive;
+                pv.LastUpdate   = now;
+            }
+
+            // update orbs
+            _orbsClient.Clear();
+            foreach (var o in state.Orbs)
+                _orbsClient.Add((o.X, o.Y));
+        }
+
+    }
+
+    private void HandleGameOver(GameOverDto go)
+    {
+        _gameOver = true;
+        _gameWon = go.WinnerId == _id;
+        Console.WriteLine(_gameWon ? "You won!" : "You lost.");
+    }
+
+    private void HandleReset()
+    {
+        _gameOver = false;
+        _gameWon = false;
+        lock (_lock)
+        {
+            _views.Clear();
+            _orbsClient.Clear();
+        }
+
+        Console.WriteLine("Game reset by server.");
     }
 
     // --- Public API ----------------------------------------------------------

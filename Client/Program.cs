@@ -1,3 +1,4 @@
+using System.Net;
 using System.Numerics;
 using Client.Model;
 using Raylib_cs;
@@ -22,7 +23,11 @@ public static class Program
             id = Console.ReadLine() ?? Guid.NewGuid().ToString()[..8];
         }
 
-        var client = new SimpleClient(id);
+        var serverIp = args.Length >= 2 && IPAddress.TryParse(args[1], out var ipAddress) 
+            ? ipAddress 
+            : IPAddress.Parse("192.168.0.7");
+
+        var client = new SimpleClient(id, serverIp);
 
         Raylib.SetConfigFlags(ConfigFlags.ResizableWindow);
         Raylib.InitWindow(800, 600, $"Client {id}");
@@ -150,6 +155,7 @@ public static class Program
             DrawOrbs(client.OrbsClient);
             DrawPlayers(client.GetInterpolated(), id);
             DrawScoreboard(client, id);
+            DrawGameOver(client, id);
             
             Raylib.EndMode2D();
 
@@ -162,6 +168,24 @@ public static class Program
         Raylib.UnloadSound(sfxBoost);
         Raylib.CloseAudioDevice();
         Raylib.CloseWindow();
+    }
+
+    private static void DrawGameOver(SimpleClient client, string id)
+    {
+        if (client.GameOver)
+        {
+            string text = client.GameWon ? "GAME WON" : "GAME LOST";
+            var color = client.GameWon ? Color.Gold : Color.DarkGray;
+            int fontSize = 60;
+            int tw = Raylib.MeasureText(text, fontSize);
+            Raylib.DrawText(
+                text,
+                (Raylib.GetScreenWidth() - tw) / 2,
+                Raylib.GetScreenHeight() / 2 - fontSize / 2,
+                fontSize,
+                color
+            );
+        }
     }
 
     private static void DrawGridBackground(int cell, Color line)

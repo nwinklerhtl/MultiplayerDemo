@@ -1,3 +1,4 @@
+using System.Net.WebSockets;
 using Server;
 using Server.Services;
 
@@ -16,6 +17,38 @@ var app = builder.Build();
 app.UseCors();
 app.MapGet("/", () => "Multiplayer Demo Server is running");
 app.MapHub<NetworkHub>("/networkHub");
+
+app.UseWebSockets();
+
+var wsClients = new List<WebSocket>();
+var wsLock = new object();
+
+app.Map("/led", async context =>
+{
+    if (context.WebSockets.IsWebSocketRequest)
+    {
+        using var ws = await context.WebSockets.AcceptWebSocketAsync();
+        lock (wsLock) wsClients.Add(ws);
+
+        Console.WriteLine("LED client connected");
+
+        var buffer = new byte[1024];
+        while (ws.State == WebSocketState.Open)
+        {
+            var result = await ws.ReceiveAsync(buffer, CancellationToken.None);
+            if (result.MessageType == WebSocketMessageType.Close)
+                break;
+        }
+
+        lock (wsLock) wsClients.Remove(ws);
+        Console.WriteLine("LED client disconnected");
+    }
+    else
+    {
+        context.Response.StatusCode = 400;
+    }
+});
+
 var server = app.Services.GetRequiredService<GameServer>();
 
 // start broadcast loop
@@ -26,7 +59,7 @@ _ = Task.Run(async () =>
     {
         try
         {
-            await server.TickBroadcastAsync();
+            await server.TickBroadcastAsync(wsClients, wsLock);
         }
         catch (Exception ex)
         {

@@ -127,23 +127,13 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        var baseUri = Nav.BaseUri.TrimEnd('/');
-        var hubUrl = baseUri.Replace("blazor", "server") + "/networkhub";
-        // if hosted together, you can simply use Nav.ToAbsoluteUri("/networkhub").ToString()
-        // hub = new HubConnectionBuilder()
-        //     .WithUrl(Nav.ToAbsoluteUri("/networkhub"))
-        //     .WithAutomaticReconnect()
-        //     .Build();
         hub = new HubConnectionBuilder()
-            .WithUrl("http://localhost:5000/networkHub")
+            .WithUrl("http://192.168.0.7:5137/networkHub")
             .WithAutomaticReconnect()
             .Build();
 
         hub.On<SignalRPacketMessage>("PacketEvent", data =>
         {
-            // var src = data?.GetType().GetProperty("src")?.GetValue(data)?.ToString() ?? "";
-            // var payload = data?.GetType().GetProperty("payload")?.GetValue(data)?.ToString() ?? "";
-            // var time = data?.GetType().GetProperty("time")?.GetValue(data)?.ToString() ?? "";
             packets.Add(data);
             if (packets.Count > 20) packets.RemoveAt(0);
             InvokeAsync(StateHasChanged);
@@ -151,8 +141,6 @@ else
 
         hub.On<SignalRStateMessage>("StateUpdate", data =>
         {
-            // var payload = data?.GetType().GetProperty("payload")?.GetValue(data)?.ToString() ?? "";
-            // var time = data?.GetType().GetProperty("time")?.GetValue(data)?.ToString() ?? "";
             states.Add(new State(data.Payload, data.Time));
             while (states.Count > 20) states.RemoveAt(0);
             latestState = data.Payload;

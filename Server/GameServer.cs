@@ -1,4 +1,7 @@
+using System.Net.WebSockets;
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using LiteNetLib;
 using Messages;
 using Microsoft.AspNetCore.SignalR;
@@ -27,6 +30,12 @@ public class GameServer
     private double NowSec => (DateTime.UtcNow - _t0).TotalSeconds;
 
     private string? _lastSentSignalRState = null;
+    private string? _lastSentLedState = null;
+    private bool _player1JustCollectedOrb = false;
+    private bool _player2JustCollectedOrb = false;
+
+    private bool _gameEnded = false;
+    private string _winnerId = string.Empty;
     
     public GameServer(
         IHubContext<NetworkHub> signalrHub,
@@ -45,10 +54,15 @@ public class GameServer
         _net = new NetManager(_listener);
         _net.Start(9050);
         
+        SpawnInitialOrbs();
+
+        Console.WriteLine("LiteNetLib server started on port 9050");
+    }
+
+    private void SpawnInitialOrbs()
+    {
         // spawn initial orbs
         for (int i = 0; i < 6; i++) SpawnOrb();
-        
-        Console.WriteLine("LiteNetLib server started on port 9050");
     }
 
     private void OnConnectionRequest(ConnectionRequest request)
@@ -130,7 +144,7 @@ public class GameServer
         }
     }
     
-    private void SimTick()
+    private async Task SimTick()
     {
         double now = NowSec;
         float dt = (float)_tickDt;
@@ -183,8 +197,27 @@ public class GameServer
                     {
                         // collect
                         sp.Score += 1;
-                        // sp.BoostCharges += 1; // award one boost
+                        
+                        // check game ended state
+                        if (sp.Score >= 50 && !_gameEnded)
+                        {
+                            _gameEnded = true;
+                            _winnerId = sp.Id;
+                            Console.WriteLine($"Game won by {sp.Id}");
+
+                            var msg = new GameOverDto(sp.Id);
+                            
+                            _ = Task.Run(async () =>
+                            {
+                                await Broadcast(MessageType.GameOver, msg, WireContext.Default.EnvelopeGameOverDto);
+                                await Task.Delay(TimeSpan.FromSeconds(10));
+                                await ResetGame();
+                            });
+                        }
+                        
                         sp.BoostCharges = 1; // set one boost
+                        if (sp.Id == "Player1") _player1JustCollectedOrb = true;
+                        if (sp.Id == "Player2") _player2JustCollectedOrb = true;
                         _orbs.RemoveAt(i);
                         SpawnOrb();
                         break;
@@ -194,13 +227,13 @@ public class GameServer
         }
     }
 
-    public async Task TickBroadcastAsync()
+    public async Task TickBroadcastAsync(List<WebSocket> wsClients, object wsLock)
     {
         // poll events first
         _net.PollEvents();
 
         // simulate
-        SimTick();
+        await SimTick();
 
         // build state snapshot
         PlayerDto[] players;
@@ -215,26 +248,57 @@ public class GameServer
         }
 
         var state = new StateMessage(players, orbs);
-        var data  = JsonSerializer.SerializeToUtf8Bytes(state, WireContext.Default.StateMessage);
+        await Broadcast(MessageType.State, state, WireContext.Default.EnvelopeStateMessage);
 
-        foreach (var peer in _net.ConnectedPeerList)
-        {
-            if (_chaos.IsActive && _chaos.ShouldDrop())
-                continue;
-            
-            var delay = _chaos.DelayMs();
-            if (delay > 0)
-                await Task.Delay(delay);
-            
-            peer.Send(data, DeliveryMethod.Unreliable);
-        }
-
-        // _ = _signalrHub.Clients.All.SendAsync("StateUpdate", new { Payload = System.Text.Encoding.UTF8.GetString(data), Time = DateTime.UtcNow.ToString("HH:mm:ss.fff") });
+        // SignalR
         var stateAsString = state.StateToString();
         if (_lastSentSignalRState is null || _lastSentSignalRState != stateAsString)
         {
             _lastSentSignalRState = stateAsString;
             await _signalrHub.Clients.All.SendAsync("StateUpdate", new SignalRStateMessage(DateTime.UtcNow, state));
+        }
+        
+        // LED Websockets
+        var player1 = _playersSim.FirstOrDefault(p => p.Value.Id == "Player1");
+        var player2 = _playersSim.FirstOrDefault(p => p.Value.Id == "Player2");
+
+        if (player1.Value is not null && player2.Value is not null)
+        {
+            var update = new
+            {
+                p1 = player1.Value.Score,
+                p2 = player2.Value.Score,
+                flash1 = false,
+                flash2 = false
+            };
+            if (_player1JustCollectedOrb)
+            {
+                update = update with { flash1 = true };
+                _player1JustCollectedOrb = false;
+            }
+
+            if (_player2JustCollectedOrb)
+            {
+                update = update with { flash2 = true };
+                _player2JustCollectedOrb = false;
+            }
+
+            var msg = JsonSerializer.Serialize(update);
+
+            if (msg != _lastSentLedState)
+            {
+                _lastSentLedState = msg;
+                var ledData = Encoding.UTF8.GetBytes(msg);
+
+                lock (wsLock)
+                {
+                    foreach (var ws in wsClients.ToList())
+                    {
+                        if (ws.State == WebSocketState.Open)
+                            _ = ws.SendAsync(ledData, WebSocketMessageType.Text, true, CancellationToken.None);
+                    }
+                }
+            }
         }
     }
     
@@ -244,5 +308,38 @@ public class GameServer
         var x = (float)_rng.Next(40, (int)_worldW - 40);
         var y = (float)_rng.Next(40, (int)_worldH - 40);
         _orbs.Add(new OrbDto(id, x, y));
+    }
+    
+    private async Task Broadcast<T>(MessageType type, T payload, JsonTypeInfo<Envelope<T>> info)
+    {
+        var envelope = new Envelope<T>(type, payload);
+        var data = JsonSerializer.SerializeToUtf8Bytes(envelope, info);
+        foreach (var peer in _net.ConnectedPeerList)
+        {
+            if (_chaos.IsActive && _chaos.ShouldDrop())
+                continue;
+            
+            var delay = _chaos.DelayMs();
+            if (delay > 0)
+                await Task.Delay(delay);
+            
+            peer.Send(data, DeliveryMethod.ReliableOrdered);
+        }
+    }
+    
+    private async Task ResetGame()
+    {
+        lock (_lock)
+        {
+            _playersSim.Clear();
+            _orbs.Clear();
+            SpawnInitialOrbs();
+            _gameEnded = false;
+            _winnerId = null;
+        }
+
+        var msg = new ResetDto();
+        await Broadcast(MessageType.Reset, msg, WireContext.Default.EnvelopeResetDto);
+        Console.WriteLine("Game reset.");
     }
 }

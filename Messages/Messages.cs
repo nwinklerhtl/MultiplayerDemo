@@ -17,6 +17,18 @@ public sealed record InputPayload(
 );
 
 // -------- Server -> Client --------
+public enum MessageType
+{
+    State,
+    GameOver,
+    Reset
+}
+
+public sealed record Envelope<T>(
+    [property: JsonPropertyName("type")] MessageType Type,
+    [property: JsonPropertyName("payload")]
+    T Payload
+);
 
 public sealed record StateMessage(
     [property: JsonPropertyName("players")]
@@ -42,6 +54,13 @@ public sealed record OrbDto(
     [property: JsonPropertyName("x")]  float  X,
     [property: JsonPropertyName("y")]  float  Y
 );
+
+public sealed record GameOverDto(
+    [property: JsonPropertyName("winnerId")]
+    string WinnerId
+);
+
+public sealed record ResetDto; 
 
 // -------- Server -> Dashboard --------
 
