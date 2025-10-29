@@ -19,7 +19,14 @@ public class SimpleClient
     private readonly Dictionary<string, PlayerView> _views = new();
     private readonly List<(float x,float y)> _orbsClient = new();
 
+    private bool playerWasBoosting = false;
+    private int playerLastOrbCount = 0;
+
     public List<(float x, float y)> OrbsClient => _orbsClient;
+    
+    // events
+    public event EventHandler UsedBoost;
+    public event EventHandler CollectedOrb;
 
 
     public SimpleClient(string id)
@@ -59,6 +66,28 @@ public class SimpleClient
             var bytes = reader.GetRemainingBytes();
             var state = JsonSerializer.Deserialize(bytes, WireContext.Default.StateMessage);
             if (state is null) return;
+            
+            // derive events
+            var player = state.Players.FirstOrDefault(p => p.Id == _id);
+            if (player is not null)
+            {
+                if (!player.BoostActive)
+                {
+                    playerWasBoosting = false;
+                }
+                
+                if (!playerWasBoosting && player.BoostActive)
+                {
+                    playerWasBoosting = true;
+                    UsedBoost?.Invoke(this, EventArgs.Empty);
+                }
+
+                if (playerLastOrbCount < player.Score)
+                {
+                    playerLastOrbCount = player.Score;
+                    CollectedOrb?.Invoke(this, EventArgs.Empty);
+                }
+            }
 
             var now = Raylib.GetTime();
             lock (_lock)

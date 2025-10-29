@@ -38,9 +38,36 @@ public static class Program
 
         float px = 400f, py = 300f;
         var lastInput = DateTime.UtcNow;
+        
+        // sound
+        Raylib.InitAudioDevice();
 
+        Sound sfxPickup = Raylib.LoadSound("Assets/Audio/pickup.wav");
+        Sound sfxBoost  = Raylib.LoadSound("Assets/Audio/booster.wav");
+        Music musicBg   = Raylib.LoadMusicStream("Assets/Audio/music.mp3");
+        musicBg.Looping = true;
+
+        // adjust volumes (0.0f–1.0f)
+        Raylib.SetSoundVolume(sfxPickup, 0.8f);
+        Raylib.SetSoundVolume(sfxBoost, 0.7f);
+        Raylib.SetMusicVolume(musicBg, 0.5f);
+
+        Raylib.PlayMusicStream(musicBg);
+
+        client.UsedBoost += (sender, eventArgs) =>
+        {
+            Raylib.PlaySound(sfxBoost);
+        };
+
+        client.CollectedOrb += (sender, eventArgs) =>
+        {
+            Raylib.PlaySound(sfxPickup);
+        };
+
+        // game loop
         while (!Raylib.WindowShouldClose())
         {
+            Raylib.UpdateMusicStream(musicBg); // must be called each frame to keep looping
             client.PollEvents();
 
             // input
@@ -129,6 +156,11 @@ public static class Program
             Raylib.EndDrawing();
         }
 
+        Raylib.StopMusicStream(musicBg);
+        Raylib.UnloadMusicStream(musicBg);
+        Raylib.UnloadSound(sfxPickup);
+        Raylib.UnloadSound(sfxBoost);
+        Raylib.CloseAudioDevice();
         Raylib.CloseWindow();
     }
 
@@ -246,7 +278,7 @@ public static class Program
         list.Sort((a, b) => b.score.CompareTo(a.score));
 
         int x = 10, y = 10, h = 20;
-        Raylib.DrawRectangle(x - 6, y - 6, 180, h * (Math.Min(6, list.Count)) + 12, new Color(0, 0, 0, 120));
+        Raylib.DrawRectangle(x - 6, y - 6, 150, h * (Math.Min(6, list.Count)) + 25, new Color(0, 0, 0, 120));
         Raylib.DrawText("Scores", x, y, 14, Color.Yellow);
         int row = 1;
         foreach (var (pid, sc) in list)
